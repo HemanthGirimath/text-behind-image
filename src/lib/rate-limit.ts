@@ -5,43 +5,23 @@ import { Plan } from '@/types/plans'
 // Create Redis instance
 const redis = Redis.fromEnv()
 
+// Define durations in milliseconds for Ratelimit
+const HOUR = 60 * 60 * 1000 // 1 hour in ms
+const MONTH = 30 * 24 * 60 * 60 * 1000 // 30 days in ms
+
 const LIMITS = {
-  free: { requests: 10, duration: '1 h' },
-  basic: { requests: 50, duration: '1 h' },
+  free: { requests: 10, duration: HOUR },
+  basic: { requests: 50, duration: HOUR },
   premium: { 
-    tensorflow: { requests: 200, duration: '1 h' },
-    removebg: { requests: 50, duration: '30 d' }
+    tensorflow: { requests: 200, duration: HOUR },
+    removebg: { requests: 50, duration: MONTH }
   }
 }
 
 export class RateLimiter {
   private static instance: RateLimiter
-  private limiters: Record<string, Ratelimit>
 
-  private constructor() {
-    this.limiters = {
-      free: new Ratelimit({
-        redis,
-        limiter: Ratelimit.slidingWindow(LIMITS.free.requests, LIMITS.free.duration),
-        prefix: 'ratelimit:free'
-      }),
-      basic: new Ratelimit({
-        redis,
-        limiter: Ratelimit.slidingWindow(LIMITS.basic.requests, LIMITS.basic.duration),
-        prefix: 'ratelimit:basic'
-      }),
-      premium_tf: new Ratelimit({
-        redis,
-        limiter: Ratelimit.slidingWindow(LIMITS.premium.tensorflow.requests, LIMITS.premium.tensorflow.duration),
-        prefix: 'ratelimit:premium:tf'
-      }),
-      premium_rb: new Ratelimit({
-        redis,
-        limiter: Ratelimit.slidingWindow(LIMITS.premium.removebg.requests, LIMITS.premium.removebg.duration),
-        prefix: 'ratelimit:premium:rb'
-      })
-    }
-  }
+  private constructor() {}
 
   static getInstance(): RateLimiter {
     if (!RateLimiter.instance) {
@@ -51,40 +31,26 @@ export class RateLimiter {
   }
 
   async checkLimit(userId: string, plan: Plan, service: 'tensorflow' | 'removebg' = 'tensorflow') {
-    const limiter = this.getLimiter(plan, service)
-    const { success, reset, remaining } = await limiter.limit(userId)
-    
+    // Temporarily disabled rate limiting
     return {
-      success,
-      reset,
-      remaining,
-      limit: this.getLimit(plan, service)
+      success: true,
+      reset: new Date(Date.now() + 3600000), // 1 hour from now
+      remaining: 999,
+      limit: 1000
     }
-  }
-
-  private getLimiter(plan: Plan, service: 'tensorflow' | 'removebg'): Ratelimit {
-    if (plan === 'premium' && service === 'removebg') {
-      return this.limiters.premium_rb
-    }
-    if (plan === 'premium') {
-      return this.limiters.premium_tf
-    }
-    if (plan === 'basic') {
-      return this.limiters.basic
-    }
-    return this.limiters.free
   }
 
   private getLimit(plan: Plan, service: 'tensorflow' | 'removebg'): number {
-    if (plan === 'premium' && service === 'removebg') {
-      return LIMITS.premium.removebg.requests
+    return 1000 // Temporary unlimited value
+  }
+
+  private getLimiter(plan: Plan, service: 'tensorflow' | 'removebg') {
+    return {
+      limit: async (userId: string) => ({
+        success: true,
+        reset: new Date(Date.now() + 3600000),
+        remaining: 999
+      })
     }
-    if (plan === 'premium') {
-      return LIMITS.premium.tensorflow.requests
-    }
-    if (plan === 'basic') {
-      return LIMITS.basic.requests
-    }
-    return LIMITS.free.requests
   }
 }
