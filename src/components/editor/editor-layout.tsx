@@ -50,6 +50,11 @@ interface TextStyle {
 
 interface ProcessedImage {
   result: string;  // The final processed image with text
+  originalImage: string; // The original image before text
+  dimensions: {
+    width: number;
+    height: number;
+  };
 }
 
 interface LayeredImage {
@@ -222,13 +227,38 @@ export default function EditorLayout({}: EditorLayoutProps) {
     e.preventDefault()
   }, [])
 
-  const updateTextLayer = (layerId: string, changes: Partial<TextStyle>) => {
-    setTextLayers(prevLayers =>
-      prevLayers.map(layer =>
-        layer.id === layerId ? { ...layer, ...changes } : layer
-      )
-    )
-  }
+  const updateTextLayer = useCallback((id: string, update: Partial<TextStyle>) => {
+    setTextLayers(prev => prev.map(layer => 
+      layer.id === id ? { ...layer, ...update } : layer
+    ));
+    
+    // Also update processedImage to reflect changes immediately
+    setProcessedImage(prev => {
+      if (!prev) return prev;
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return prev;
+      
+      canvas.width = prev.dimensions.width;
+      canvas.height = prev.dimensions.height;
+      
+      // Draw the background image
+      const img = new Image();
+      img.src = prev.originalImage;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      
+      // Draw all text layers
+      textLayers.forEach(layer => {
+        const updatedLayer = layer.id === id ? { ...layer, ...update } : layer;
+        drawTextOnCanvas(ctx, updatedLayer, canvas.width, canvas.height);
+      });
+      
+      return {
+        ...prev,
+        result: canvas.toDataURL('image/png')
+      };
+    });
+  }, [textLayers]);
 
   const handleTextChange = (layerId: string, text: string) => {
     setTextLayers(prevLayers =>
@@ -433,7 +463,11 @@ export default function EditorLayout({}: EditorLayoutProps) {
       const finalImage = canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', outputQuality / 100);
 
       // Set processed result
-      setProcessedImage({ result: finalImage });
+      setProcessedImage({ 
+        result: finalImage, 
+        originalImage: uploadedImage, 
+        dimensions: { width: bgImg.width, height: bgImg.height } 
+      });
       toast.success('Image processed successfully!', { id: toastId });
     } catch (error) {
       console.error('Error processing image:', error);
@@ -473,6 +507,47 @@ export default function EditorLayout({}: EditorLayoutProps) {
         return layer;
       })
     );
+  };
+
+  const drawTextOnCanvas = (ctx: CanvasRenderingContext2D, layer: TextStyle, width: number, height: number) => {
+    ctx.save();
+    
+    // Set the font before measuring text
+    ctx.font = `${layer.size}px ${layer.font}`;
+    
+    // Calculate positions
+    const x = (layer.x / 100) * width;
+    const y = (layer.y / 100) * height;
+    
+    // Apply transformations
+    ctx.translate(x, y);
+    ctx.rotate((layer.rotation * Math.PI) / 180);
+    ctx.scale(layer.scale, layer.scale);
+    
+    // Set text properties
+    ctx.fillStyle = layer.color;
+    ctx.globalAlpha = layer.opacity;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    // Draw the text
+    if (layer.gradient) {
+      const gradient = ctx.createLinearGradient(-ctx.measureText(layer.text).width / 2, 0, ctx.measureText(layer.text).width / 2, 0);
+      gradient.addColorStop(0, layer.gradientColors.start);
+      gradient.addColorStop(0.5, layer.gradientColors.middle);
+      gradient.addColorStop(1, layer.gradientColors.end);
+      ctx.fillStyle = gradient;
+    }
+    
+    if (layer.shadow) {
+      ctx.shadowColor = layer.shadowColor;
+      ctx.shadowBlur = layer.shadowBlur;
+      ctx.shadowOffsetX = layer.shadowOffset.x;
+      ctx.shadowOffsetY = layer.shadowOffset.y;
+    }
+    
+    ctx.fillText(layer.text, 0, 0);
+    ctx.restore();
   };
 
   // Handle hydration
@@ -518,96 +593,79 @@ export default function EditorLayout({}: EditorLayoutProps) {
             className="relative w-[1024px] h-[768px] bg-gray-100 rounded-lg overflow-hidden mb-4"
           >
             {uploadedImage ? (
-              <>
-                <div className="relative w-full h-full">
-                  {processedImage ? (
+              <div className="relative w-full h-full">
+                {processedImage ? (
+                  <img
+                    src={processedImage.result}
+                    alt="Processed"
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <>
                     <img
-                      src={processedImage.result}
-                      alt="Processed"
+                      src={uploadedImage}
+                      alt="Background"
                       className="w-full h-full object-contain"
                     />
-                  ) : (
-                    <>
-                      <img
-                        src={uploadedImage}
-                        alt="Background"
-                        className="w-full h-full object-contain"
-                      />
-                      
-                      {/* Text Layers - only show when not processed */}
-                      {textLayers.map((layer) => (
-                        <div
-                          key={layer.id}
-                          className={`absolute ${selectedLayer === layer.id ? 'cursor-move' : 'cursor-pointer'}`}
-                          style={{
-                            left: `${layer.x}%`,
-                            top: `${layer.y}%`,
-                            transform: `translate(-50%, -50%) rotate(${layer.rotation}deg) scale(${layer.scale})`,
-                            fontSize: `${layer.size}px`,
-                            opacity: layer.opacity,
-                            filter: `blur(${layer.blur}px)`,
-                            textShadow: layer.shadow
-                              ? `${layer.shadowOffset.x}px ${layer.shadowOffset.y}px ${layer.shadowBlur}px ${layer.shadowColor}`
-                              : 'none',
-                            fontFamily: layer.font,
-                            zIndex: selectedLayer === layer.id ? 2 : 1,
-                            display: 'inline-block',
-                            ...(layer.gradient
-                              ? {
-                                  backgroundImage: `linear-gradient(45deg, ${layer.gradientColors.start}, ${layer.gradientColors.middle}, ${layer.gradientColors.end})`,
-                                  WebkitBackgroundClip: 'text',
-                                  backgroundClip: 'text',
-                                  WebkitTextFillColor: 'transparent',
-                                  color: 'transparent',
-                                  backgroundColor: 'transparent'
-                                }
-                              : {
-                                  color: layer.color
-                                })
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedLayer(layer.id);
-                          }}
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
-                            handleTextDragStart(e, layer.id);
-                          }}
-                          onTouchStart={(e) => {
-                            e.stopPropagation();
-                            handleTextDragStart(e, layer.id);
-                          }}
-                        >
-                          {layer.text}
-                        </div>
-                      ))}
-                    </>
-                  )}
-                </div>
-
-                {/* Control Buttons */}
-                <div className="absolute top-2 right-2 flex gap-2">
-                  {processedImage ? (
-                    <button
-                      onClick={handleReset}
-                      className="p-1 bg-white rounded-full shadow-md hover:bg-gray-100"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                    </button>
-                  ) : (
                     <button
                       onClick={() => {
-                        setUploadedImage(null);
+                        setUploadedImage('');
+                        setProcessedImage(null);
                         setTextLayers([]);
-                        setSelectedLayer(null);
                       }}
-                      className="p-1 bg-white rounded-full shadow-md hover:bg-gray-100"
+                      className="absolute top-2 right-2 w-8 h-8 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white border-2 border-white shadow-md z-50"
                     >
-                      <X className="w-4 h-4" />
+                      <X size={20} />
                     </button>
-                  )}
-                </div>
-              </>
+                    
+                    {/* Text Layers - only show when not processed */}
+                    {textLayers.map((layer) => (
+                      <div
+                        key={layer.id}
+                        className={`absolute ${selectedLayer === layer.id ? 'cursor-move' : 'cursor-pointer'}`}
+                        style={{
+                          position: 'absolute',
+                          left: `${layer.x}%`,
+                          top: `${layer.y}%`,
+                          transform: `translate(-50%, -50%) rotate(${layer.rotation}deg) scale(${layer.scale})`,
+                          fontSize: `${layer.size}px`,
+                          fontFamily: layer.font,
+                          color: layer.color,
+                          opacity: layer.opacity,
+                          maxWidth: 'none',
+                          whiteSpace: 'nowrap',
+                          textShadow: layer.shadow
+                            ? `${layer.shadowOffset.x}px ${layer.shadowOffset.y}px ${layer.shadowBlur}px ${layer.shadowColor}`
+                            : 'none',
+                          background: layer.gradient
+                            ? `linear-gradient(45deg, ${layer.gradientColors.start}, ${layer.gradientColors.middle}, ${layer.gradientColors.end})`
+                            : 'none',
+                          WebkitBackgroundClip: layer.gradient ? 'text' : 'none',
+                          WebkitTextFillColor: layer.gradient ? 'transparent' : 'inherit',
+                          cursor: selectedLayer === layer.id ? 'move' : 'pointer',
+                          userSelect: 'none',
+                          transformOrigin: 'center',
+                          zIndex: selectedLayer === layer.id ? 2 : 1,
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedLayer(layer.id);
+                        }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          handleTextDragStart(e, layer.id);
+                        }}
+                        onTouchStart={(e) => {
+                          e.stopPropagation();
+                          handleTextDragStart(e, layer.id);
+                        }}
+                      >
+                        {layer.text}
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
             ) : (
               <div {...getRootProps()} className="w-full h-full flex items-center justify-center">
                 <input {...getInputProps()} />
@@ -751,6 +809,45 @@ export default function EditorLayout({}: EditorLayoutProps) {
                         onChange={(e) => updateTextLayer(selectedLayer, { color: e.target.value })}
                         className="h-10"
                       />
+                    </div>
+                    <div>
+                      <Label>Font</Label>
+                      <Select
+                        value={textLayers.find(l => l.id === selectedLayer)?.font || ''}
+                        onValueChange={(value) => updateTextLayer(selectedLayer, { font: value })}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select font" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[200px] overflow-y-auto">
+                          {[
+                            'Arial',
+                            'Helvetica',
+                            'Times New Roman',
+                            'Georgia',
+                            'Verdana',
+                            'Tahoma',
+                            'Trebuchet MS',
+                            'Impact',
+                            'Comic Sans MS',
+                            'Courier New',
+                            'Palatino',
+                            'Garamond',
+                            'Bookman',
+                            'Avant Garde',
+                            'Futura',
+                            'Century Gothic',
+                            'Calibri',
+                            'Candara',
+                            'Segoe UI',
+                            'System UI'
+                          ].map((font) => (
+                            <SelectItem key={font} value={font}>
+                              <span style={{ fontFamily: font }}>{font}</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </CollapsibleContent>
                 </Collapsible>
