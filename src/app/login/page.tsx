@@ -53,7 +53,24 @@ export default function LoginPage() {
           <Auth
             supabaseClient={supabase}
             view="sign_in"
-            appearance={{ theme: ThemeSupa }}
+            appearance={{
+              extend: true,
+              className: {
+                input: 'supabase-auth-ui_ui-input'
+              },
+              theme: ThemeSupa,
+              variables: {
+                default: {
+                  colors: {
+                    brand: '#2563eb',
+                    brandAccent: '#1d4ed8',
+                    inputBackground: '#1a1a1a',
+                    inputText: '#ffffff',
+                    inputBorder: '#333333',
+                  },
+                },
+              },
+            }}
             theme="dark"
             showLinks={true}
             providers={['github', 'google']}
