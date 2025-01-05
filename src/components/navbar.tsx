@@ -60,7 +60,7 @@ export function Navbar() {
         <div className="flex flex-1 items-center justify-between">
           <Link 
             href={user ? "/editor" : "/"}
-            className="flex items-center space-x-2 font-bold text-xl hover:opacity-80 transition-opacity"
+            className="flex items-center space-x-2 font-bold text-xl sm:text-2xl hover:opacity-80 transition-opacity"
           >
             <span>Text-Behind-Image</span>
           </Link>

@@ -14,7 +14,9 @@ import { Slider } from "@/components/ui/slider"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { removeImageBackground } from "@/lib/remove-bg"
-import {nanoid} from 'nanoid'
+import { nanoid } from 'nanoid'
+import { ExportOptions } from '@/components/editor/export-options'
+import { platformPresets, PlatformPreset } from '@/config/platform-presets'
 
 interface TextStyle {
   id: string;
@@ -477,6 +479,47 @@ export default function EditorLayout({}: EditorLayoutProps) {
     }
   };
 
+  const handleExportWithPreset = async (preset?: PlatformPreset) => {
+    if (!uploadedImage || isDownloading) return;
+    setIsDownloading(true);
+    
+    try {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Could not get canvas context');
+
+      const img = new Image();
+      img.src = processedImage?.result || uploadedImage;
+      
+      await new Promise((resolve) => {
+        img.onload = () => {
+          // Use preset dimensions if provided, otherwise use original dimensions
+          canvas.width = preset?.width || img.width;
+          canvas.height = preset?.height || img.height;
+          
+          // Draw and scale image to fit the canvas
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(null);
+        };
+      });
+
+      const link = document.createElement('a');
+      const filename = preset ? `${preset.name.toLowerCase().replace(/\s+/g, '-')}.${outputFormat}` : `edited-image.${outputFormat}`;
+      link.download = filename;
+      link.href = canvas.toDataURL(`image/${outputFormat}`, outputQuality / 100);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      toast.success('Image exported successfully!');
+    } catch (error) {
+      console.error('Error exporting image:', error);
+      toast.error('Failed to export image');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   // Helper function to load image
   const loadImage = (src: string): Promise<HTMLImageElement> => {
     return new Promise((resolve, reject) => {
@@ -553,44 +596,30 @@ export default function EditorLayout({}: EditorLayoutProps) {
   // Handle hydration
   useEffect(() => {
     setMounted(true)
-    // Load saved data after mounting
-    if (typeof window !== 'undefined') {
-      const savedImage = localStorage.getItem('uploadedImage')
-      const savedProcessedImage = localStorage.getItem('processedImage')
-      const savedTextLayers = localStorage.getItem('textLayers')
-      
-      if (savedImage) {
-        setUploadedImage(savedImage)
-      }
-      
-      if (savedProcessedImage) {
-        setProcessedImage(JSON.parse(savedProcessedImage))
-      }
-      
-      if (savedTextLayers) {
-        setTextLayers(JSON.parse(savedTextLayers))
-      }
-    }
   }, [])
 
   // Don't render anything until after hydration
   if (!mounted) {
-    return null
+    return (
+      <div className="h-screen w-full flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    )
   }
 
   return (
-    <div className="flex flex-col gap-4 p-4 max-w-[1400px] mx-auto">
-      <div className="flex justify-between items-center">
+    <div className="flex flex-col md:flex-row gap-4 p-4 max-w-[1400px] mx-auto">
+      <div className="flex justify-between items-center md:hidden mb-4">
         <h2 className="text-2xl font-bold">Image Editor</h2>
       </div>
       
-      <div className="flex gap-4">
+      <div className="flex flex-col md:flex-row gap-4">
         {/* Left side - Image Preview */}
-        <div className="flex-1">
-          {/* Image Container - Always fixed size */}
+        <div className="flex-1 min-w-0">
+          {/* Image Container - Fixed size on desktop, responsive on mobile */}
           <div 
             ref={containerRef}
-            className="relative w-[1024px] h-[768px] bg-gray-100 rounded-lg overflow-hidden mb-4"
+            className="relative w-full md:w-[1024px] h-[50vh] md:h-[768px] bg-gray-100 rounded-lg overflow-hidden mb-4"
           >
             {uploadedImage ? (
               <div className="relative w-full h-full">
@@ -677,86 +706,80 @@ export default function EditorLayout({}: EditorLayoutProps) {
             )}
           </div>
 
-          {/* Process Controls */}
+          {/* Export Options */}
           {uploadedImage && (
-            <div className="w-full max-w-[1024px] space-y-4 mb-6">
-              <div className="flex items-center gap-4">
-                <Select
-                  value={outputFormat}
-                  onValueChange={(value: 'png' | 'jpeg') => setOutputFormat(value)}
-                >
-                  <SelectTrigger className="w-32">
-                    <SelectValue placeholder="Format" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="png">PNG</SelectItem>
-                    <SelectItem value="jpeg">JPEG</SelectItem>
-                  </SelectContent>
-                </Select>
-                
-                {outputFormat === 'jpeg' && (
-                  <div className="flex-1 space-y-2">
-                    <div className="flex justify-between">
-                      <Label>Quality</Label>
-                      <span className="text-sm text-gray-500">{outputQuality}%</span>
+            <div className="w-full space-y-4 mb-6">
+              <div className="flex flex-wrap gap-4 items-center justify-center md:justify-start">
+                {/* Format and Quality Controls */}
+                <div className="flex items-center gap-4">
+                  <Select
+                    value={outputFormat}
+                    onValueChange={(value: 'png' | 'jpeg') => setOutputFormat(value)}
+                  >
+                    <SelectTrigger className="w-32">
+                      <SelectValue placeholder="Format" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="png">PNG</SelectItem>
+                      <SelectItem value="jpeg">JPEG</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  
+                  {outputFormat === 'jpeg' && (
+                    <div className="flex-1 space-y-2 min-w-[200px]">
+                      <div className="flex justify-between">
+                        <Label>Quality</Label>
+                        <span className="text-sm text-gray-500">{outputQuality}%</span>
+                      </div>
+                      <Slider
+                        value={[outputQuality]}
+                        onValueChange={(value) => setOutputQuality(value[0])}
+                        min={0}
+                        max={100}
+                        step={1}
+                        className="w-full"
+                      />
                     </div>
-                    <Slider
-                      value={[outputQuality]}
-                      onValueChange={(value) => setOutputQuality(value[0])}
-                      min={0}
-                      max={100}
-                      step={1}
-                      className="w-full"
-                    />
-                  </div>
-                )}
+                  )}
+                </div>
+
+                {/* Platform-specific Export Options */}
+                <ExportOptions
+                  onExport={handleExportWithPreset}
+                  isExporting={isDownloading}
+                  disabled={!uploadedImage || isProcessing}
+                />
               </div>
-              
-              {processedImage ? (
-                <Button 
-                  className="w-fit mx-auto px-4" 
-                  size="default"
-                  disabled={isDownloading}
-                  onClick={handleDownload}
-                >
-                  {isDownloading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Downloading...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-4 h-4 mr-2" />
-                      Download Image
-                    </>
-                  )}
-                </Button>
-              ) : (
-                <Button 
-                  className="w-fit mx-auto px-4" 
-                  size="default"
-                  disabled={isProcessing || textLayers.length === 0}
-                  onClick={handleProcessImage}
-                >
-                  {isProcessing ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Processing Image...
-                    </>
-                  ) : (
-                    <>
-                      <Wand2 className="w-4 h-4 mr-2" />
-                      Process Image
-                    </>
-                  )}
-                </Button>
-              )}
+            </div>
+          )}
+
+          {/* Process Controls */}
+          {uploadedImage && processedImage === null && (
+            <div className="w-full max-w-[1024px] space-y-4 mb-6">
+              <Button 
+                className="w-fit mx-auto px-4" 
+                size="default"
+                disabled={isProcessing || textLayers.length === 0}
+                onClick={handleProcessImage}
+              >
+                {isProcessing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Processing Image...
+                  </>
+                ) : (
+                  <>
+                    <Wand2 className="w-4 h-4 mr-2" />
+                    Process Image
+                  </>
+                )}
+              </Button>
             </div>
           )}
         </div>
 
-        {/* Right side - Text Controls */}
-        <Card className="w-[300px] h-[768px] overflow-y-auto p-4">
+        {/* Text Controls - Right sidebar on desktop, bottom panel on mobile */}
+        <Card className="w-full md:w-[300px] h-[50vh] md:h-[768px] overflow-y-auto p-4">
           <div className="space-y-4">
             <Button 
               className="w-full" 
@@ -771,7 +794,7 @@ export default function EditorLayout({}: EditorLayoutProps) {
                 {/* Free Features */}
                 <Collapsible open={freeOpen} onOpenChange={setFreeOpen}>
                   <CollapsibleTrigger className="flex w-full items-center justify-between py-2">
-                    <h4 className="text-sm font-medium">Free Features</h4>
+                    <h4 className="text-sm font-medium bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">Free Features</h4>
                     <div>
                       {freeOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                     </div>
@@ -855,7 +878,7 @@ export default function EditorLayout({}: EditorLayoutProps) {
                 {/* Basic Features */}
                 <Collapsible open={basicOpen} onOpenChange={setBasicOpen}>
                   <CollapsibleTrigger className="flex w-full items-center justify-between py-2">
-                    <h4 className="text-sm font-medium">Basic Features</h4>
+                    <h4 className="text-sm font-medium bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">Basic Features</h4>
                     <div>
                       {basicOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                     </div>
@@ -917,7 +940,7 @@ export default function EditorLayout({}: EditorLayoutProps) {
                 {/* Premium Features */}
                 <Collapsible open={premiumOpen} onOpenChange={setPremiumOpen}>
                   <CollapsibleTrigger className="flex w-full items-center justify-between py-2">
-                    <h4 className="text-sm font-medium">Premium Features</h4>
+                    <h4 className="text-sm font-medium bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">Premium Features</h4>
                     <div>
                       {premiumOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                     </div>

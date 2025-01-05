@@ -60,7 +60,8 @@ const plans = [
       'Advanced text positioning',
       'Custom text transformations',
       'Priority support',
-      'Background removal API access',
+      'AI color suggestions (Coming Soon)',
+      'AI text style suggestions (Coming Soon)',
     ],
   },
 ]
@@ -107,19 +108,19 @@ export default function PricingPage() {
   }
 
   return (
-    <div className="container mx-auto py-10">
-      <div className="text-center mb-10">
-        <h1 className="text-4xl font-bold mb-4">Simple, transparent pricing</h1>
-        <p className="text-xl text-muted-foreground">
-          Choose the plan that's right for you
-        </p>
+    <div className="container mx-auto px-4 py-16">
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-bold mb-4">Simple, Transparent Pricing</h1>
+        <p className="text-xl text-muted-foreground">Choose the plan that's right for you</p>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
         {plans.map((plan) => (
           <Card key={plan.name} className="flex flex-col">
             <CardHeader>
-              <CardTitle>{plan.name}</CardTitle>
+              <CardTitle className="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 text-transparent bg-clip-text">
+                {plan.name}
+              </CardTitle>
               <CardDescription>{plan.description}</CardDescription>
             </CardHeader>
             <CardContent className="flex-grow">
