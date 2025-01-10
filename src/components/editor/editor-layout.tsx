@@ -28,6 +28,8 @@ interface TextStyle {
   font: string;
   rotation: number;
   scale: number;
+  scaleX: number;
+  scaleY: number;
   opacity: number;
   blur: number;
   shadow: boolean;
@@ -124,6 +126,8 @@ const defaultTextStyle: TextStyle = {
   font: 'Arial',
   rotation: 0,
   scale: 1,
+  scaleX: 1,
+  scaleY: 1,
   opacity: 1,
   blur: 0,
   shadow: false,
@@ -230,37 +234,101 @@ export default function EditorLayout({}: EditorLayoutProps) {
   }, [])
 
   const updateTextLayer = useCallback((id: string, update: Partial<TextStyle>) => {
-    setTextLayers(prev => prev.map(layer => 
-      layer.id === id ? { ...layer, ...update } : layer
-    ));
-    
-    // Also update processedImage to reflect changes immediately
-    setProcessedImage(prev => {
-      if (!prev) return prev;
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return prev;
-      
-      canvas.width = prev.dimensions.width;
-      canvas.height = prev.dimensions.height;
-      
-      // Draw the background image
-      const img = new Image();
-      img.src = prev.originalImage;
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      
-      // Draw all text layers
-      textLayers.forEach(layer => {
-        const updatedLayer = layer.id === id ? { ...layer, ...update } : layer;
-        drawTextOnCanvas(ctx, updatedLayer, canvas.width, canvas.height);
-      });
-      
-      return {
-        ...prev,
-        result: canvas.toDataURL('image/png')
-      };
+    // Update text layer state
+    setTextLayers(prevLayers => {
+      const newLayers = prevLayers.map(layer => 
+        layer.id === id ? { ...layer, ...update } : layer
+      );
+
+      // Update the processed image if it exists
+      if (processedImage) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return newLayers;
+
+        canvas.width = processedImage.dimensions.width;
+        canvas.height = processedImage.dimensions.height;
+
+        // Load both images
+        const bgImg = new Image();
+        const fgImg = new Image();
+
+        Promise.all([
+          new Promise(resolve => {
+            bgImg.onload = resolve;
+            bgImg.src = processedImage.originalImage;
+          }),
+          new Promise(resolve => {
+            fgImg.onload = resolve;
+            fgImg.src = processedImage.result;
+          })
+        ]).then(() => {
+          // Draw background
+          ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
+
+          // Draw text layers
+          newLayers.forEach(layer => {
+            drawTextOnCanvas(ctx, layer, canvas.width, canvas.height);
+          });
+
+          // Draw foreground
+          ctx.drawImage(fgImg, 0, 0, canvas.width, canvas.height);
+
+          // Update processed image
+          setProcessedImage(prev => ({
+            ...prev!,
+            result: canvas.toDataURL('image/png')
+          }));
+        });
+      }
+
+      return newLayers;
     });
-  }, [textLayers]);
+  }, [processedImage]);
+
+  const drawTextOnCanvas = (ctx: CanvasRenderingContext2D, layer: TextStyle, width: number, height: number) => {
+    const x = (layer.x / 100) * width;
+    const y = (layer.y / 100) * height;
+    
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate((layer.rotation * Math.PI) / 180);
+    ctx.scale(layer.scaleX, layer.scaleY);
+    
+    const fontSize = layer.size;
+    ctx.font = `${fontSize}px ${layer.font || 'Arial'}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.globalAlpha = layer.opacity;
+
+    // Apply shadow if enabled
+    if (layer.shadow) {
+      ctx.shadowColor = layer.shadowColor;
+      ctx.shadowBlur = layer.shadowBlur;
+      ctx.shadowOffsetX = layer.shadowOffset.x;
+      ctx.shadowOffsetY = layer.shadowOffset.y;
+    }
+
+    const textMetrics = ctx.measureText(layer.text);
+    const textWidth = textMetrics.width;
+
+    // Create gradient or use solid color for text
+    if (layer.gradient) {
+      const gradient = ctx.createLinearGradient(
+        -textWidth/2, 0,  // start point
+        textWidth/2, 0    // end point
+      );
+      gradient.addColorStop(0, layer.gradientColors.start);
+      gradient.addColorStop(0.5, layer.gradientColors.middle);
+      gradient.addColorStop(1, layer.gradientColors.end);
+      ctx.fillStyle = gradient;
+    } else {
+      ctx.fillStyle = layer.color;
+    }
+    
+    ctx.fillText(layer.text, 0, 0);
+    ctx.restore();
+  };
 
   const handleTextChange = (layerId: string, text: string) => {
     setTextLayers(prevLayers =>
@@ -283,6 +351,8 @@ export default function EditorLayout({}: EditorLayoutProps) {
       font: 'Arial',
       rotation: 0,
       scale: 1,
+      scaleX: 1,
+      scaleY: 1,
       opacity: 1,
       blur: 0,
       shadow: false,
@@ -367,6 +437,54 @@ export default function EditorLayout({}: EditorLayoutProps) {
     };
   }, [isDragging, handleTextDragMove, handleTextDragEnd]);
 
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (processedImage && textLayers.length > 0) {
+      const updateProcessedImage = async () => {
+        try {
+          // Load images
+          const [bgImg, fgImg] = await Promise.all([
+            loadImage(processedImage.originalImage),
+            loadImage(processedImage.result)
+          ]);
+
+          // Create canvas
+          const canvas = document.createElement('canvas');
+          canvas.width = processedImage.dimensions.width;
+          canvas.height = processedImage.dimensions.height;
+          const ctx = canvas.getContext('2d');
+          
+          if (!ctx) return;
+
+          // Draw background
+          ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
+
+          // Draw text layers
+          textLayers.forEach(layer => {
+            drawTextOnCanvas(ctx, layer, canvas.width, canvas.height);
+          });
+
+          // Draw foreground
+          ctx.drawImage(fgImg, 0, 0, canvas.width, canvas.height);
+
+          // Update processed image
+          const finalImage = canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', outputQuality / 100);
+          setProcessedImage(prev => ({
+            ...prev!,
+            result: finalImage
+          }));
+        } catch (error) {
+          console.error('Error updating processed image:', error);
+        }
+      };
+
+      updateProcessedImage();
+    }
+  }, [textLayers, processedImage, outputFormat, outputQuality]);
+
   const handleReset = () => {
     setProcessedImage(null);
   };
@@ -382,6 +500,8 @@ export default function EditorLayout({}: EditorLayoutProps) {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      
+      toast.success('Image exported successfully!');
     } catch (error) {
       console.error('Error downloading image:', error);
       toast.error('Failed to download image');
@@ -415,50 +535,15 @@ export default function EditorLayout({}: EditorLayoutProps) {
         throw new Error('Could not get canvas context');
       }
 
-      // Draw background maintaining aspect ratio
+      // Draw background
       ctx.drawImage(bgImg, 0, 0, bgImg.width, bgImg.height);
 
       // Draw text layers
       textLayers.forEach(layer => {
-        ctx.save();
-        
-        // Calculate position based on original image dimensions
-        const x = (layer.x / 100) * bgImg.width;
-        const y = (layer.y / 100) * bgImg.height;
-        
-        // Apply transformations
-        ctx.translate(x, y);
-        ctx.rotate((layer.rotation * Math.PI) / 180);
-        ctx.scale(layer.scale, layer.scale);
-        
-        // Set text styles
-        ctx.font = `${layer.size}px ${layer.font || 'Arial'}`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = layer.color;
-        ctx.globalAlpha = layer.opacity;
-
-        if (layer.shadow) {
-          ctx.shadowColor = layer.shadowColor;
-          ctx.shadowBlur = layer.shadowBlur;
-          ctx.shadowOffsetX = layer.shadowOffset.x;
-          ctx.shadowOffsetY = layer.shadowOffset.y;
-        }
-
-        if (layer.gradient) {
-          const gradient = ctx.createLinearGradient(-50, -50, 50, 50);
-          gradient.addColorStop(0, layer.gradientColors.start);
-          gradient.addColorStop(0.5, layer.gradientColors.middle);
-          gradient.addColorStop(1, layer.gradientColors.end);
-          ctx.fillStyle = gradient;
-        }
-        
-        // Draw text
-        ctx.fillText(layer.text, 0, 0);
-        ctx.restore();
+        drawTextOnCanvas(ctx, layer, bgImg.width, bgImg.height);
       });
 
-      // Draw foreground maintaining aspect ratio
+      // Draw foreground
       ctx.drawImage(fgImg, 0, 0, bgImg.width, bgImg.height);
 
       // Get final image
@@ -466,10 +551,11 @@ export default function EditorLayout({}: EditorLayoutProps) {
 
       // Set processed result
       setProcessedImage({ 
-        result: finalImage, 
-        originalImage: uploadedImage, 
+        result: finalImage,
+        originalImage: uploadedImage,
         dimensions: { width: bgImg.width, height: bgImg.height } 
       });
+
       toast.success('Image processed successfully!', { id: toastId });
     } catch (error) {
       console.error('Error processing image:', error);
@@ -552,52 +638,6 @@ export default function EditorLayout({}: EditorLayoutProps) {
     );
   };
 
-  const drawTextOnCanvas = (ctx: CanvasRenderingContext2D, layer: TextStyle, width: number, height: number) => {
-    ctx.save();
-    
-    // Set the font before measuring text
-    ctx.font = `${layer.size}px ${layer.font}`;
-    
-    // Calculate positions
-    const x = (layer.x / 100) * width;
-    const y = (layer.y / 100) * height;
-    
-    // Apply transformations
-    ctx.translate(x, y);
-    ctx.rotate((layer.rotation * Math.PI) / 180);
-    ctx.scale(layer.scale, layer.scale);
-    
-    // Set text properties
-    ctx.fillStyle = layer.color;
-    ctx.globalAlpha = layer.opacity;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    
-    // Draw the text
-    if (layer.gradient) {
-      const gradient = ctx.createLinearGradient(-ctx.measureText(layer.text).width / 2, 0, ctx.measureText(layer.text).width / 2, 0);
-      gradient.addColorStop(0, layer.gradientColors.start);
-      gradient.addColorStop(0.5, layer.gradientColors.middle);
-      gradient.addColorStop(1, layer.gradientColors.end);
-      ctx.fillStyle = gradient;
-    }
-    
-    if (layer.shadow) {
-      ctx.shadowColor = layer.shadowColor;
-      ctx.shadowBlur = layer.shadowBlur;
-      ctx.shadowOffsetX = layer.shadowOffset.x;
-      ctx.shadowOffsetY = layer.shadowOffset.y;
-    }
-    
-    ctx.fillText(layer.text, 0, 0);
-    ctx.restore();
-  };
-
-  // Handle hydration
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
   // Don't render anything until after hydration
   if (!mounted) {
     return (
@@ -624,11 +664,54 @@ export default function EditorLayout({}: EditorLayoutProps) {
             {uploadedImage ? (
               <div className="relative w-full h-full">
                 {processedImage ? (
-                  <img
-                    src={processedImage.result}
-                    alt="Processed"
-                    className="w-full h-full object-contain"
-                  />
+                  <>
+                    <img
+                      src={processedImage.result}
+                      alt="Processed"
+                      className="w-full h-full object-contain"
+                    />
+                    {/* Keep text layers visible and editable after processing */}
+                    {textLayers.map((layer) => (
+                      <div
+                        key={layer.id}
+                        style={{
+                          position: 'absolute',
+                          left: `${layer.x}%`,
+                          top: `${layer.y}%`,
+                          transform: `translate(-50%, -50%) rotate(${layer.rotation}deg) scale(${layer.scaleX}, ${layer.scaleY})`,
+                          fontSize: `${layer.size}px`,
+                          fontFamily: layer.font,
+                          opacity: layer.opacity,
+                          filter: `blur(${layer.blur}px)`,
+                          textShadow: layer.shadow
+                            ? `${layer.shadowOffset.x}px ${layer.shadowOffset.y}px ${layer.shadowBlur}px ${layer.shadowColor}`
+                            : 'none',
+                          cursor: 'move',
+                          userSelect: 'none',
+                          zIndex: 10,
+                          color: !layer.gradient ? layer.color : 'transparent',
+                          backgroundImage: layer.gradient
+                            ? `linear-gradient(90deg, ${layer.gradientColors.start}, ${layer.gradientColors.middle}, ${layer.gradientColors.end})`
+                            : 'none',
+                          WebkitBackgroundClip: layer.gradient ? 'text' : 'none',
+                          WebkitTextFillColor: layer.gradient ? 'transparent' : 'inherit',
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedLayer(layer.id);
+                        }}
+                        onMouseDown={(e) => handleTextDragStart(e, layer.id)}
+                      >
+                        <div
+                          style={{
+                            display: 'inline-block'
+                          }}
+                        >
+                          {layer.text}
+                        </div>
+                      </div>
+                    ))}
+                  </>
                 ) : (
                   <>
                     <img
@@ -636,64 +719,60 @@ export default function EditorLayout({}: EditorLayoutProps) {
                       alt="Background"
                       className="w-full h-full object-contain"
                     />
-                    <button
-                      onClick={() => {
-                        setUploadedImage('');
-                        setProcessedImage(null);
-                        setTextLayers([]);
-                      }}
-                      className="absolute top-2 right-2 w-8 h-8 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white border-2 border-white shadow-md z-50"
-                    >
-                      <X size={20} />
-                    </button>
-                    
-                    {/* Text Layers - only show when not processed */}
                     {textLayers.map((layer) => (
                       <div
                         key={layer.id}
-                        className={`absolute ${selectedLayer === layer.id ? 'cursor-move' : 'cursor-pointer'}`}
                         style={{
                           position: 'absolute',
                           left: `${layer.x}%`,
                           top: `${layer.y}%`,
-                          transform: `translate(-50%, -50%) rotate(${layer.rotation}deg) scale(${layer.scale})`,
+                          transform: `translate(-50%, -50%) rotate(${layer.rotation}deg) scale(${layer.scaleX}, ${layer.scaleY})`,
                           fontSize: `${layer.size}px`,
                           fontFamily: layer.font,
-                          color: layer.color,
                           opacity: layer.opacity,
-                          maxWidth: 'none',
-                          whiteSpace: 'nowrap',
+                          filter: `blur(${layer.blur}px)`,
                           textShadow: layer.shadow
                             ? `${layer.shadowOffset.x}px ${layer.shadowOffset.y}px ${layer.shadowBlur}px ${layer.shadowColor}`
                             : 'none',
-                          background: layer.gradient
-                            ? `linear-gradient(45deg, ${layer.gradientColors.start}, ${layer.gradientColors.middle}, ${layer.gradientColors.end})`
+                          cursor: 'move',
+                          userSelect: 'none',
+                          zIndex: 10,
+                          color: !layer.gradient ? layer.color : 'transparent',
+                          backgroundImage: layer.gradient
+                            ? `linear-gradient(90deg, ${layer.gradientColors.start}, ${layer.gradientColors.middle}, ${layer.gradientColors.end})`
                             : 'none',
                           WebkitBackgroundClip: layer.gradient ? 'text' : 'none',
                           WebkitTextFillColor: layer.gradient ? 'transparent' : 'inherit',
-                          cursor: selectedLayer === layer.id ? 'move' : 'pointer',
-                          userSelect: 'none',
-                          transformOrigin: 'center',
-                          zIndex: selectedLayer === layer.id ? 2 : 1,
                         }}
                         onClick={(e) => {
                           e.stopPropagation();
                           setSelectedLayer(layer.id);
                         }}
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                          handleTextDragStart(e, layer.id);
-                        }}
-                        onTouchStart={(e) => {
-                          e.stopPropagation();
-                          handleTextDragStart(e, layer.id);
-                        }}
+                        onMouseDown={(e) => handleTextDragStart(e, layer.id)}
                       >
-                        {layer.text}
+                        <div
+                          style={{
+                            display: 'inline-block'
+                          }}
+                        >
+                          {layer.text}
+                        </div>
                       </div>
                     ))}
                   </>
                 )}
+                {/* Always show remove button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setUploadedImage(null);
+                    setProcessedImage(null);
+                    setTextLayers([]);
+                  }}
+                  className="absolute top-2 right-2 p-2 bg-background/80 rounded-full hover:bg-background/90 transition-colors z-20"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
             ) : (
               <div {...getRootProps()} className="w-full h-full flex items-center justify-center">
@@ -901,19 +980,36 @@ export default function EditorLayout({}: EditorLayoutProps) {
                       </div>
                     </div>
                     <div>
-                      <Label>Scale</Label>
+                      <Label>Scale X</Label>
                       <div className="flex items-center gap-2">
                         <input
                           type="range"
                           min="0.1"
                           max="5"
                           step="0.1"
-                          value={textLayers.find(l => l.id === selectedLayer)?.scale || 1}
-                          onChange={(e) => updateTextLayer(selectedLayer, { scale: parseFloat(e.target.value) })}
+                          value={textLayers.find(l => l.id === selectedLayer)?.scaleX || 1}
+                          onChange={(e) => updateTextLayer(selectedLayer, { scaleX: parseFloat(e.target.value) })}
                           className="flex-1"
                         />
                         <span className="text-sm w-12 text-right">
-                          {textLayers.find(l => l.id === selectedLayer)?.scale || 1}x
+                          {textLayers.find(l => l.id === selectedLayer)?.scaleX || 1}x
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Scale Y</Label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="5"
+                          step="0.1"
+                          value={textLayers.find(l => l.id === selectedLayer)?.scaleY || 1}
+                          onChange={(e) => updateTextLayer(selectedLayer, { scaleY: parseFloat(e.target.value) })}
+                          className="flex-1"
+                        />
+                        <span className="text-sm w-12 text-right">
+                          {textLayers.find(l => l.id === selectedLayer)?.scaleY || 1}x
                         </span>
                       </div>
                     </div>
